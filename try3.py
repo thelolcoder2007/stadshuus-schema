@@ -21,7 +21,7 @@ BLUE = "#0057B8"
 WHITE = "white"
 BLACK = "black"
 
-IS_TESTING = True
+IS_TESTING = False
 today = datetime.now().date() - timedelta(days=2)  # noqa: DTZ005
 
 locale.setlocale(locale.LC_TIME, "nl_NL")
@@ -71,7 +71,7 @@ def extract_time_of_day(bookings):
         end_time = datetime.fromisoformat(booking["start"]).time()
         if time(9, 0) <= start_time <= time(12, 30):
             morning.append(booking)
-        elif time(12, 30) <= start_time <= time(17, 1):
+        elif time(12, 30) <= start_time <= time(17, 0):
             afternoon.append(booking)
         elif time(19, 0) <= start_time <= time(22, 30):
             evening.append(booking)
