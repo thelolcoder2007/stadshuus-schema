@@ -96,80 +96,177 @@ def extract_data(bookings):
             activity.append(booking["description"])
     return location, orga, activity
 
-    # Header display
-    today_str: str = datetime.now().strftime("%A, %B %d, %Y")
-    header: tk.Label = tk.Label(
-        root, text=today_str, fg="#FFFFFF", bg="#121212", font=title_font
+
+def create_activity_gui(
+    morning_locations,
+    morning_organisations,
+    morning_activities,
+    afternoon_locations,
+    afternoon_organisations,
+    afternoon_activities,
+    evening_locations,
+    evening_organisations,
+    evening_activities,
+):
+    root = tk.Tk()
+    root.title("Activiteitenoverzicht")
+    root.configure(bg=WHITE)
+    root.attributes("-fullscreen", True)
+    root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
+
+    header_font = tkfont.Font(family="Helvetica", size=26, weight="bold")
+    column_header_font = tkfont.Font(
+        family="Helvetica", size=18, weight="bold", underline=True
     )
-    header.pack(pady=(60, 10))
+    row_font = tkfont.Font(family="Helvetica", size=20)
+    date_font = tkfont.Font(family="Helvetica", size=18, weight="bold")
 
-    events_frame: tk.Frame = tk.Frame(root, bg="#121212")
-    events_frame.pack(fill="both", expand=True, padx=100)
+    # ---------- Top blue bar ----------
+    top_bar = tk.Frame(root, bg=BLUE, height=90)
+    top_bar.pack(side="top", fill="x")
+    top_bar.pack_propagate(False)
 
-    agenda: list[EventDict] = fetch_today_events(ICAL_URL)
+    try:
+        logo_img = Image.open(LOGO_PATH)
+        logo_img.thumbnail((200, 2000))
+        logo_photo = ImageTk.PhotoImage(logo_img)
+        logo_label = tk.Label(top_bar, image=logo_photo, bg=BLUE)
+        logo_label.image = logo_photo  # keep a reference, or it gets garbage collected  # pyright: ignore[reportAttributeAccessIssue]
+        logo_label.pack(side="left", padx=25, pady=10)
+    except Exception as e:
+        print(f"Could not load logo from '{LOGO_PATH}': {e}")
 
-    # Insert initial \vfill before the first event
-    _ = create_vfill(events_frame)
+    date_label = tk.Label(
+        top_bar,
+        text=today.strftime("%A %d %B %Y"),
+        bg=BLUE,
+        fg=WHITE,
+        font=date_font,
+    )
+    date_label.pack(side="right", padx=25)
 
-    if not agenda:
-        no_event_label: tk.Label = tk.Label(
-            events_frame,
-            text="Vandaag geen evenementen",
-            fg="#A0A0A0",
-            bg="#121212",
-            font=event_font,
+    # ---------- Content area ----------
+    # A Canvas always clips its contents to its own visible area. We pin the
+    # inner "content" frame to the TOP of the canvas (anchor="n"). If content
+    # ends up taller than the canvas, the excess extends past the bottom and
+    # is clipped there - the top stays fully visible, which is what we want.
+    canvas = tk.Canvas(root, bg=WHITE, highlightthickness=0)
+    canvas.pack(side="top", fill="both", expand=True)
+
+    content = tk.Frame(canvas, bg=WHITE)
+    content_window = canvas.create_window((0, 0), window=content, anchor="n")
+
+    row_frames = []  # every per-activity row, so we can re-wrap text on resize
+
+    def _on_canvas_resize(event):
+        # Keep the inner frame exactly as wide as the canvas, and re-center
+        # it horizontally at the top. This is what makes the three columns
+        # responsive to window resizing.
+        canvas.itemconfig(content_window, width=event.width)
+        canvas.coords(content_window, event.width / 2, 0)
+
+        # Re-wrap each label's text to roughly a third of the new width, so
+        # long names wrap inside their own column instead of drifting into
+        # the neighbouring one.
+        col_width = max(event.width // 3 - 40, 80)
+        for row in row_frames:
+            for label in row.winfo_children():
+                label.configure(wraplength=col_width)
+
+    canvas.bind("<Configure>", _on_canvas_resize)
+
+    now = datetime.now().time()
+    show_morning = now < time(12, 30)
+    show_afternoon = now < time(17, 0)
+
+    def add_grid_row(parent, texts, font, pady=6):
+        """Lay out three values across the same responsive column grid used
+        everywhere else, so headings and data rows always line up."""
+        row = tk.Frame(parent, bg=WHITE)
+        row.pack(pady=pady, fill="x", padx=40)
+        row_frames.append(row)
+
+        row.columnconfigure(0, weight=1, uniform="activity_cols")
+        row.columnconfigure(1, weight=1, uniform="activity_cols")
+        row.columnconfigure(2, weight=1, uniform="activity_cols")
+
+        for col, text in enumerate(texts):
+            tk.Label(
+                row,
+                text=text,
+                bg=WHITE,
+                fg=BLACK,
+                font=font,
+                anchor="center",
+                justify="center",
+            ).grid(row=0, column=col, sticky="nsew", padx=15)
+
+    def add_section(title, locations, organisations, activities, visible):
+        if not visible and not IS_TESTING:
+            return
+
+        # The time-of-day heading, centered across the full content width.
+        tk.Label(
+            content,
+            text=title,
+            bg=WHITE,
+            fg=BLACK,
+            font=header_font,
+            anchor="w",
+            justify="left",
+        ).pack(padx=50, pady=(30, 10), fill="x")
+
+        # Column headers, aligned with the data columns below them.
+        add_grid_row(
+            content,
+            ("ORGANISATOR", "EVENEMENT", "LOCATIE"),
+            column_header_font,
+            pady=(0, 8),  # pyright: ignore[reportArgumentType]
         )
 
-            row: tk.Frame = tk.Frame(events_frame, bg="#121212")
-            row.pack(fill="x")
+        if not organisations and not activities and not locations:
+            tk.Label(
+                content,
+                text="Geen Activiteiten",
+                bg=WHITE,
+                fg=BLACK,
+                font=row_font,
+            ).pack(pady=5)
+            return
 
-            # Column 1: Time
-            time_label: tk.Label = tk.Label(
-                row,
-                text=time_str,
-                fg=time_color,
-                bg="#121212",
-                font=event_font,
-                width=10,
-                anchor="ne",
-                justify="left",
-            )
-            time_label.pack(side="left", anchor="n")
+        # Build the rows explicitly as dicts first - this makes it obvious
+        # (and easy to check) that each row keeps its own organisation,
+        # activity, and location together, instead of the three columns
+        # accidentally ending up showing the same value.
+        activity_rows = [
+            {"organisation": org, "activity": act, "location": loc}
+            for org, act, loc in zip(organisations, activities, locations)
+        ]
 
-            # Column 2: Summary
-            # Using expand=True ensures this column takes exactly half the available remaining space
-            summary_label: tk.Label = tk.Label(
-                row,
-                text=item["summary"],
-                fg="#EEEEEE",
-                bg="#121212",
-                font=event_font,
-                anchor="ne",
-                justify="left",
-                wraplength=column_wrap_width,
-            )
-            summary_label.pack(
-                side="left", padx=(500, 10), expand=False, fill="x", anchor="n"
+        for entry in activity_rows:
+            add_grid_row(
+                content,
+                (entry["organisation"], entry["activity"], entry["location"]),
+                row_font,
             )
 
-            # Column 3: Description
-            # Using expand=True ensures this column takes the other half
-            desc_label: tk.Label = tk.Label(
-                row,
-                text=item["description"],
-                fg="#AAAAAA",
-                bg="#121212",
-                font=desc_font,
-                anchor="ne",
-                justify="right",
-                wraplength=column_wrap_width,
-            )
-            desc_label.pack(
-                side="right", padx=(10, 20), expand=True, fill="x", anchor="n"
-            )
-
-            # Insert \vfill after each event to distribute vertical space
-            _ = create_vfill(events_frame)
+    add_section(
+        "OCHTEND",
+        morning_locations,
+        morning_organisations,
+        morning_activities,
+        show_morning,
+    )
+    add_section(
+        "MIDDAG",
+        afternoon_locations,
+        afternoon_organisations,
+        afternoon_activities,
+        show_afternoon,
+    )
+    add_section(
+        "AVOND", evening_locations, evening_organisations, evening_activities, True
+    )
 
     root.mainloop()
 
