@@ -214,7 +214,7 @@ def create_activity_gui(
             font=header_font,
             anchor="w",
             justify="left",
-        ).pack(padx=50, pady=(30, 10), fill="x")
+        ).pack(padx=75, pady=(30, 10), fill="x")
 
         # Column headers, aligned with the data columns below them.
         add_grid_row(
