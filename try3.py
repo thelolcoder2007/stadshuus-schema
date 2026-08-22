@@ -1,101 +1,100 @@
+#!/usr/bin/env python3
 import locale
+import os
 import tkinter as tk
-import urllib.request
-from datetime import date, datetime
-from tkinter import font
-from typing import TypedDict
+from datetime import datetime, time, timedelta
+from tkinter import font as tkfont
 
-from icalendar import Calendar  # pyright: ignore[reportMissingModuleSource]
-from icalendar.cal import Component  # pyright: ignore[reportMissingModuleSource]
+import requests
+from PIL import Image, ImageTk
 
-ICAL_URL: str = "https://www.supersaas.nl/info/webcal/3327E8.ics"
-# "https://supersaas.nl/schedule/download/Stadshuuslochem/Ruimtes?format=ics&from=09/06/2026&to=13/06/2026&resources=0&button="  # TODO: Make the days dynamic!!!
+PUBLIC_SCHEDULE_ID = os.environ["STADSHUUS_PUBLIC_SCHEDULE_ID"]
+PUBLIC_API_KEY = os.environ["STADSHUUS_PUBLIC_API_KEY"]
 
-
-class EventDict(TypedDict):
-    time: datetime | date
-    is_all_day: bool
-    summary: str
-    description: str
+PRIVATE_SCHEDULE_ID = os.environ["STADSHUUS_PRIVATE_SCHEDULE_ID"]
+PRIVATE_API_KEY = os.environ["STADSHUUS_PRIVATE_API_KEY"]
 
 
-def fetch_today_events(url: str) -> list[EventDict]:
-    """Fetches the ics file, parses it, and returns sorted events for today."""
+LOGO_PATH = "stadshuus.png"
+
+BLUE = "#0057B8"
+WHITE = "white"
+BLACK = "black"
+
+IS_TESTING = True
+today = datetime.now().date() - timedelta(days=2)  # noqa: DTZ005
+
+locale.setlocale(locale.LC_TIME, "nl_NL")
+
+
+def get_schedule(id: str, key: str):
+    url = f"https://www.supersaas.com/api/range/{id}.json"
+    parameters = {
+        "api_key": key,
+        "from": str(today - timedelta(days=1)),
+        "to": str(today + timedelta(days=1)),
+        "limit": "1000",
+        "form": "true",
+    }
     try:
-        req: urllib.request.Request = urllib.request.Request(
-            url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as response:  # pyright: ignore[reportAny]
-            ical_data: bytes = response.read()  # pyright: ignore[reportAny]
+        response = requests.get(url, params=parameters, timeout=30)
+    except requests.exceptions.RequestException as fout:
+        print("FOUT: kon geen verbinding maken met Supersaas voor vandaag.")
+        print(f"Details: {fout}")
+        return None
 
-        cal: Component = Calendar.from_ical(ical_data)  # pyright: ignore[reportArgumentType]
-        today: date = date(day=10, month=6, year=2026)  # Kept custom date
-        events: list[EventDict] = []
+    if response.status_code != 200:
+        print("FOUT: Supersaas gaf geen succesvol antwoord terug voor vandaag.")
+        print(f"Statuscode: {response.status_code}")
+        print(response.text[:500])
+        return None
 
-        for component in cal.walk():
-            if component.name == "VEVENT":
-                dtstart_prop = component.get("dtstart")  # pyright: ignore[reportAny]
-                if not dtstart_prop:
-                    continue
-
-                dtstart: datetime | date = dtstart_prop.dt  # pyright: ignore[reportAny]
-
-                event_date: date
-                is_all_day: bool
-                if isinstance(dtstart, datetime):
-                    event_date = dtstart.date()
-                    is_all_day = False
-                else:
-                    event_date = dtstart
-                    is_all_day = True
-
-                if event_date == today:
-                    summary: str = str(component.get("summary", "No Title"))  # pyright: ignore[reportAny]
-                    description: str = str(component.get("description", ""))  # pyright: ignore[reportAny]
-
-                    events.append(
-                        {
-                            "time": dtstart,
-                            "is_all_day": is_all_day,
-                            "summary": summary,
-                            "description": description,
-                        }
-                    )
-
-        events.sort(
-            key=lambda e: (
-                not e["is_all_day"],
-                e["time"] if isinstance(e["time"], datetime) else datetime.min,
-            )
-        )
-        return events
-    except Exception:
-        return []
+    data = response.json()
+    return data["bookings"]
 
 
-def create_vfill(parent: tk.Widget) -> tk.Frame:
-    spacer: tk.Frame = tk.Frame(parent, bg="#121212")
-    spacer.pack(expand=True, fill="both")
-    return spacer
+def filter_today(bookings):
+    bookings_today = []
+    for booking in bookings:
+        if datetime.fromisoformat(booking["start"]).date() == today:
+            bookings_today.append(booking)
+
+    return bookings_today
 
 
-def build_gui() -> None:
-    root: tk.Tk = tk.Tk()
-    root.title("Stadshuus evenementen viewer")
+def extract_time_of_day(bookings):
+    morning = []
+    afternoon = []
+    evening = []
+    for booking in bookings:
+        start_time = datetime.fromisoformat(booking["start"]).time()
+        end_time = datetime.fromisoformat(booking["start"]).time()
+        if time(9, 0) <= start_time <= time(12, 30):
+            morning.append(booking)
+        elif time(12, 30) <= start_time <= time(17, 1):
+            afternoon.append(booking)
+        elif time(19, 0) <= start_time <= time(22, 30):
+            evening.append(booking)
 
-    _ = root.attributes("-fullscreen", True)  # pyright: ignore[reportUnknownMemberType]
-    _ = root.configure(bg="#121212")
-    _ = root.bind("<Escape>", lambda e: root.destroy())
-    _ = root.bind("q", lambda e: root.destroy())
+        if time(9, 0) <= end_time <= time(12, 30) and booking not in morning:
+            morning.append(booking)
+        elif time(12, 30) <= end_time <= time(17, 1) and booking not in afternoon:
+            afternoon.append(booking)
+        elif time(19, 0) <= end_time <= time(22, 30) and booking not in evening:
+            evening.append(booking)
+    return morning, afternoon, evening
 
-    # Get screen width to calculate dynamic text wrap length for two columns
-    screen_width: int = root.winfo_screenwidth()
-    # Subtracting padding and time column width (~400px), split remaining space in 2
-    column_wrap_width: int = (screen_width - 400) // 2
 
-    title_font: font.Font = font.Font(family="Helvetica", size=42, weight="bold")
-    event_font: font.Font = font.Font(family="Helvetica", size=28)
-    desc_font: font.Font = font.Font(family="Helvetica", size=22)
+def extract_data(bookings):
+    location = []
+    orga = []
+    activity = []
+    if bookings != []:
+        for booking in bookings:
+            location.append(booking["res_name"])
+            orga.append(booking["field_1"])
+            activity.append(booking["description"])
+    return location, orga, activity
 
     # Header display
     today_str: str = datetime.now().strftime("%A, %B %d, %Y")
@@ -120,18 +119,6 @@ def build_gui() -> None:
             bg="#121212",
             font=event_font,
         )
-        no_event_label.pack()
-        # _ = create_vfill(events_frame)
-    else:
-        for item in agenda:
-            time_str: str
-            time_color: str
-            if item["is_all_day"]:
-                time_str = "All Day "
-                time_color = "#FFA500"
-            else:
-                time_str = item["time"].strftime("%H:%M")
-                time_color = "#00ADB5"
 
             row: tk.Frame = tk.Frame(events_frame, bg="#121212")
             row.pack(fill="x")
@@ -188,5 +175,22 @@ def build_gui() -> None:
 
 
 if __name__ == "__main__":
-    _ = locale.setlocale(locale.LC_ALL, "nl_NL.UTF-8")
-    build_gui()
+    public_bookings = filter_today(get_schedule(PUBLIC_SCHEDULE_ID, PUBLIC_API_KEY))
+    private_bookings = filter_today(get_schedule(PRIVATE_SCHEDULE_ID, PRIVATE_API_KEY))
+    bookings = public_bookings + private_bookings
+    morning, afternoon, evening = extract_time_of_day(bookings)
+
+    morning_location, morning_orga, morning_activity = extract_data(morning)
+    afternoon_location, afternoon_orga, afternoon_activity = extract_data(afternoon)
+    evening_location, evening_orga, evening_activity = extract_data(evening)
+    create_activity_gui(
+        morning_location,
+        morning_orga,
+        morning_activity,
+        afternoon_location,
+        afternoon_orga,
+        afternoon_activity,
+        evening_location,
+        evening_orga,
+        evening_activity,
+    )
