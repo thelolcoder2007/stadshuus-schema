@@ -26,8 +26,6 @@ GREY = "#606060"  # used for alternating rows, together with BLACK
 IS_TESTING = False
 today = datetime.now().date()  # noqa: DTZ005
 
-today = datetime(year=2026, month=8, day=20).date()  # noqa: DTZ001
-
 locale.setlocale(locale.LC_TIME, "nl_NL")
 
 
@@ -100,10 +98,18 @@ def extract_time_of_day(bookings):
     return morning, afternoon, evening
 
 
+def format_time_range(start_iso, finish_iso):
+    """Turn "2026-08-20T09:00" / "2026-08-20T10:00" into "09:00–10:00"."""
+    start = datetime.fromisoformat(start_iso).strftime("%H:%M")
+    finish = datetime.fromisoformat(finish_iso).strftime("%H:%M")
+    return f"{start}–{finish}"
+
+
 def extract_data(bookings):
     location = []
     orga = []
     activity = []
+    times = []
     if bookings != []:
         for booking in bookings:
             try:
@@ -133,7 +139,8 @@ def extract_data(bookings):
             location.append(booking["res_name"])
             orga.append(booking["field_1"])
             activity.append(booking["description"])
-    return location, orga, activity
+            times.append(format_time_range(booking["start"], booking["finish"]))
+    return location, orga, activity, times
 
 
 def get_current_period():
@@ -153,12 +160,15 @@ def create_activity_gui(
     morning_locations,
     morning_organisations,
     morning_activities,
+    morning_times,
     afternoon_locations,
     afternoon_organisations,
     afternoon_activities,
+    afternoon_times,
     evening_locations,
     evening_organisations,
     evening_activities,
+    evening_times,
 ):
     root = tk.Tk()
     root.title("Activiteitenoverzicht")
@@ -171,7 +181,12 @@ def create_activity_gui(
         family="Helvetica", size=18, weight="bold", underline=True
     )
     row_font = tkfont.Font(family="Helvetica", size=20)
-    date_font = tkfont.Font(family="Helvetica", size=30, weight="bold")
+    date_font = tkfont.Font(family="Helvetica", size=40, weight="bold")
+
+    # The time column only ever needs to fit "HH:MM–HH:MM", so measure that
+    # once and keep the column pinned to it instead of letting it stretch
+    # like the other (text-length-variable) columns.
+    time_col_width = row_font.measure("00:00–00:00") + 20
 
     # ---------- Top blue bar ----------
     top_bar = tk.Frame(root, bg=BLUE, height=90)
@@ -217,13 +232,14 @@ def create_activity_gui(
         canvas.itemconfig(content_window, width=event.width)
         canvas.coords(content_window, event.width / 2, 0)
 
-        # Re-wrap each label's text to roughly a third of the new width, so
-        # long names wrap inside their own column instead of drifting into
-        # the neighbouring one.
-        col_width = max(event.width // 3 - 40, 80)
+        # Re-wrap each label's text to roughly a third of the remaining
+        # width (after the fixed-width time column), so long names wrap
+        # inside their own column instead of drifting into the neighbour.
+        remaining_width = max(event.width - time_col_width - 80, 240)
+        col_width = max(remaining_width // 3 - 40, 80)
         for row in row_frames:
-            for label in row.winfo_children():
-                label.configure(wraplength=col_width)
+            for i, label in enumerate(row.winfo_children()):
+                label.configure(wraplength=time_col_width if i == 0 else col_width)
 
     canvas.bind("<Configure>", _on_canvas_resize)
 
@@ -236,9 +252,10 @@ def create_activity_gui(
         row.pack(pady=pady, fill="x", padx=40)
         row_frames.append(row)
 
-        row.columnconfigure(0, weight=1, uniform="activity_cols")
+        row.columnconfigure(0, weight=0, minsize=time_col_width)
         row.columnconfigure(1, weight=1, uniform="activity_cols")
         row.columnconfigure(2, weight=1, uniform="activity_cols")
+        row.columnconfigure(3, weight=1, uniform="activity_cols")
 
         for col, text in enumerate(texts):
             tk.Label(
@@ -251,7 +268,7 @@ def create_activity_gui(
                 justify="left",
             ).grid(row=0, column=col, sticky="nsew", padx=15)
 
-    def add_section(period_key, title, locations, organisations, activities):
+    def add_section(period_key, title, locations, organisations, activities, times):
         # Only render the section that matches the current time of day,
         # unless IS_TESTING is on (in which case show everything, as before).
         visible = IS_TESTING or period_key == current_period
@@ -272,7 +289,7 @@ def create_activity_gui(
         # Column headers, aligned with the data columns below them.
         add_grid_row(
             content,
-            ("ORGANISATOR", "EVENEMENT", "LOCATIE"),
+            ("TIJD", "ORGANISATOR", "EVENEMENT", "LOCATIE"),
             column_header_font,
             pady=(0, 8),  # pyright: ignore[reportArgumentType]
         )
@@ -288,12 +305,12 @@ def create_activity_gui(
             return
 
         # Build the rows explicitly as dicts first - this makes it obvious
-        # (and easy to check) that each row keeps its own organisation,
-        # activity, and location together, instead of the three columns
+        # (and easy to check) that each row keeps its own time, organisation,
+        # activity, and location together, instead of the columns
         # accidentally ending up showing the same value.
         activity_rows = [
-            {"organisation": org, "activity": act, "location": loc}
-            for org, act, loc in zip(organisations, activities, locations)
+            {"time": t, "organisation": org, "activity": act, "location": loc}
+            for t, org, act, loc in zip(times, organisations, activities, locations)
         ]
 
         # Alternate row text colour between black and grey for readability.
@@ -301,7 +318,12 @@ def create_activity_gui(
         for i, entry in enumerate(activity_rows):
             add_grid_row(
                 content,
-                (entry["organisation"], entry["activity"], entry["location"]),
+                (
+                    entry["time"],
+                    entry["organisation"],
+                    entry["activity"],
+                    entry["location"],
+                ),
                 row_font,
                 fg=row_colors[i % 2],
             )
@@ -312,6 +334,7 @@ def create_activity_gui(
         morning_locations,
         morning_organisations,
         morning_activities,
+        morning_times,
     )
     add_section(
         "middag",
@@ -319,6 +342,7 @@ def create_activity_gui(
         afternoon_locations,
         afternoon_organisations,
         afternoon_activities,
+        afternoon_times,
     )
     add_section(
         "avond",
@@ -326,6 +350,7 @@ def create_activity_gui(
         evening_locations,
         evening_organisations,
         evening_activities,
+        evening_times,
     )
 
     root.mainloop()
@@ -338,17 +363,26 @@ if __name__ == "__main__":
     print(json.dumps(bookings))
     morning, afternoon, evening = extract_time_of_day(bookings)
 
-    morning_location, morning_orga, morning_activity = extract_data(morning)
-    afternoon_location, afternoon_orga, afternoon_activity = extract_data(afternoon)
-    evening_location, evening_orga, evening_activity = extract_data(evening)
+    morning_location, morning_orga, morning_activity, morning_times = extract_data(
+        morning
+    )
+    afternoon_location, afternoon_orga, afternoon_activity, afternoon_times = (
+        extract_data(afternoon)
+    )
+    evening_location, evening_orga, evening_activity, evening_times = extract_data(
+        evening
+    )
     create_activity_gui(
         morning_location,
         morning_orga,
         morning_activity,
+        morning_times,
         afternoon_location,
         afternoon_orga,
         afternoon_activity,
+        afternoon_times,
         evening_location,
         evening_orga,
         evening_activity,
+        evening_times,
     )
