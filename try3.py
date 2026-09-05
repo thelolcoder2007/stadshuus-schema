@@ -146,7 +146,7 @@ def extract_data(bookings):
 def get_current_period():
     """Return which section ("ochtend", "middag", "avond") the current time
     falls into, or None if it's outside all of them."""
-    now = datetime.now().time()
+    now = datetime.now().time()  # noqa: DTZ005
     if time(9, 0) <= now <= time(12, 30):
         return "ochtend"
     if time(12, 30) < now <= time(17, 0):
@@ -200,7 +200,7 @@ def create_activity_gui(
         logo_label = tk.Label(top_bar, image=logo_photo, bg=BLUE)
         logo_label.image = logo_photo  # keep a reference, or it gets garbage collected  # pyright: ignore[reportAttributeAccessIssue]
         logo_label.pack(side="left", padx=25, pady=10)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"Could not load logo from '{LOGO_PATH}': {e}")
 
     date_label = tk.Label(
