@@ -91,6 +91,11 @@ def extract_data(bookings):
     activity = []
     if bookings != []:
         for booking in bookings:
+            try:
+                if booking["field_1_r"] == "Nee":
+                    continue
+            except:
+                pass
             location.append(booking["res_name"])
             orga.append(booking["field_1"])
             activity.append(booking["description"])
@@ -275,6 +280,7 @@ if __name__ == "__main__":
     public_bookings = filter_today(get_schedule(PUBLIC_SCHEDULE_ID, PUBLIC_API_KEY))
     private_bookings = filter_today(get_schedule(PRIVATE_SCHEDULE_ID, PRIVATE_API_KEY))
     bookings = public_bookings + private_bookings
+    print(json.dumps(bookings))
     morning, afternoon, evening = extract_time_of_day(bookings)
 
     morning_location, morning_orga, morning_activity = extract_data(morning)
