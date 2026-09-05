@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import locale
 import os
 import tkinter as tk
@@ -20,9 +21,12 @@ LOGO_PATH = "stadshuus.png"
 BLUE = "#0057B8"
 WHITE = "white"
 BLACK = "black"
+GREY = "#606060"  # used for alternating rows, together with BLACK
 
 IS_TESTING = False
-today = datetime.now().date() - timedelta(days=2)  # noqa: DTZ005
+today = datetime.now().date()  # noqa: DTZ005
+
+today = datetime(year=2026, month=8, day=20).date()  # noqa: DTZ001
 
 locale.setlocale(locale.LC_TIME, "nl_NL")
 
@@ -60,6 +64,17 @@ def filter_today(bookings):
             bookings_today.append(booking)
 
     return bookings_today
+
+
+def sort_bookings(bookings):
+    """Sort bookings by start time first; break ties by organisation (field_1)."""
+    return sorted(
+        bookings,
+        key=lambda booking: (
+            datetime.fromisoformat(booking["start"]),
+            booking.get("field_1", ""),
+        ),
+    )
 
 
 def extract_time_of_day(bookings):
@@ -121,6 +136,19 @@ def extract_data(bookings):
     return location, orga, activity
 
 
+def get_current_period():
+    """Return which section ("ochtend", "middag", "avond") the current time
+    falls into, or None if it's outside all of them."""
+    now = datetime.now().time()
+    if time(9, 0) <= now <= time(12, 30):
+        return "ochtend"
+    if time(12, 30) < now <= time(17, 0):
+        return "middag"
+    if time(19, 0) <= now <= time(22, 30):
+        return "avond"
+    return None
+
+
 def create_activity_gui(
     morning_locations,
     morning_organisations,
@@ -143,7 +171,7 @@ def create_activity_gui(
         family="Helvetica", size=18, weight="bold", underline=True
     )
     row_font = tkfont.Font(family="Helvetica", size=20)
-    date_font = tkfont.Font(family="Helvetica", size=40, weight="bold")
+    date_font = tkfont.Font(family="Helvetica", size=30, weight="bold")
 
     # ---------- Top blue bar ----------
     top_bar = tk.Frame(root, bg=BLUE, height=90)
@@ -199,11 +227,9 @@ def create_activity_gui(
 
     canvas.bind("<Configure>", _on_canvas_resize)
 
-    now = datetime.now().time()
-    show_morning = now < time(12, 30)
-    show_afternoon = now < time(17, 0)
+    current_period = get_current_period()
 
-    def add_grid_row(parent, texts, font, pady=6):
+    def add_grid_row(parent, texts, font, pady=6, fg=BLACK):
         """Lay out three values across the same responsive column grid used
         everywhere else, so headings and data rows always line up."""
         row = tk.Frame(parent, bg=WHITE)
@@ -219,14 +245,17 @@ def create_activity_gui(
                 row,
                 text=text,
                 bg=WHITE,
-                fg=BLACK,
+                fg=fg,
                 font=font,
                 anchor="w",
                 justify="left",
             ).grid(row=0, column=col, sticky="nsew", padx=15)
 
-    def add_section(title, locations, organisations, activities, visible):
-        if not visible and not IS_TESTING:
+    def add_section(period_key, title, locations, organisations, activities):
+        # Only render the section that matches the current time of day,
+        # unless IS_TESTING is on (in which case show everything, as before).
+        visible = IS_TESTING or period_key == current_period
+        if not visible:
             return
 
         # The time-of-day heading, centered across the full content width.
@@ -267,29 +296,36 @@ def create_activity_gui(
             for org, act, loc in zip(organisations, activities, locations)
         ]
 
-        for entry in activity_rows:
+        # Alternate row text colour between black and grey for readability.
+        row_colors = [BLACK, GREY]
+        for i, entry in enumerate(activity_rows):
             add_grid_row(
                 content,
                 (entry["organisation"], entry["activity"], entry["location"]),
                 row_font,
+                fg=row_colors[i % 2],
             )
 
     add_section(
+        "ochtend",
         "OCHTEND",
         morning_locations,
         morning_organisations,
         morning_activities,
-        show_morning,
     )
     add_section(
+        "middag",
         "MIDDAG",
         afternoon_locations,
         afternoon_organisations,
         afternoon_activities,
-        show_afternoon,
     )
     add_section(
-        "AVOND", evening_locations, evening_organisations, evening_activities, True
+        "avond",
+        "AVOND",
+        evening_locations,
+        evening_organisations,
+        evening_activities,
     )
 
     root.mainloop()
@@ -298,7 +334,7 @@ def create_activity_gui(
 if __name__ == "__main__":
     public_bookings = filter_today(get_schedule(PUBLIC_SCHEDULE_ID, PUBLIC_API_KEY))
     private_bookings = filter_today(get_schedule(PRIVATE_SCHEDULE_ID, PRIVATE_API_KEY))
-    bookings = public_bookings + private_bookings
+    bookings = sort_bookings(public_bookings + private_bookings)
     print(json.dumps(bookings))
     morning, afternoon, evening = extract_time_of_day(bookings)
 
