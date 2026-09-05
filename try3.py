@@ -94,8 +94,27 @@ def extract_data(bookings):
             try:
                 if booking["field_1_r"] == "Nee":
                     continue
-            except:
+            except KeyError:
                 pass
+            if booking["res_name"][0] in [
+                chr(i) for i in range(97, 123)
+            ]:  # If the character is a lowercase letter
+                booking["res_name"] = (
+                    booking["res_name"][0].upper() + booking["res_name"][1:]
+                )
+            if booking["field_1"][0] in [
+                chr(i) for i in range(97, 123)
+            ]:  # If the character is a lowercase letter
+                booking["field_1"] = (
+                    booking["field_1"][0].upper() + booking["field_1"][1:]
+                )
+
+            if booking["description"][0] in [
+                chr(i) for i in range(97, 123)
+            ]:  # If the character is a lowercase letter
+                booking["description"] = (
+                    booking["description"][0].upper() + booking["description"][1:]
+                )
             location.append(booking["res_name"])
             orga.append(booking["field_1"])
             activity.append(booking["description"])
@@ -124,7 +143,7 @@ def create_activity_gui(
         family="Helvetica", size=18, weight="bold", underline=True
     )
     row_font = tkfont.Font(family="Helvetica", size=20)
-    date_font = tkfont.Font(family="Helvetica", size=18, weight="bold")
+    date_font = tkfont.Font(family="Helvetica", size=40, weight="bold")
 
     # ---------- Top blue bar ----------
     top_bar = tk.Frame(root, bg=BLUE, height=90)
@@ -133,7 +152,7 @@ def create_activity_gui(
 
     try:
         logo_img = Image.open(LOGO_PATH)
-        logo_img.thumbnail((200, 2000))
+        logo_img.thumbnail((400, 1500))
         logo_photo = ImageTk.PhotoImage(logo_img)
         logo_label = tk.Label(top_bar, image=logo_photo, bg=BLUE)
         logo_label.image = logo_photo  # keep a reference, or it gets garbage collected  # pyright: ignore[reportAttributeAccessIssue]
@@ -202,8 +221,8 @@ def create_activity_gui(
                 bg=WHITE,
                 fg=BLACK,
                 font=font,
-                anchor="center",
-                justify="center",
+                anchor="w",
+                justify="left",
             ).grid(row=0, column=col, sticky="nsew", padx=15)
 
     def add_section(title, locations, organisations, activities, visible):
