@@ -21,10 +21,14 @@ LOGO_PATH = "stadshuus.png"
 BLUE = "#0057B8"
 WHITE = "white"
 BLACK = "black"
-GREY = "#606060"  # used for alternating rows, together with BLACK
+GREY = "#606060"
 
 IS_TESTING = False
 today = datetime.now().date()  # noqa: DTZ005
+now = datetime.now().time()  # noqa: DTZ005
+
+REFRESH_INTERVAL_MINUTES = 15
+REFRESH_INTERVAL_MS = REFRESH_INTERVAL_MINUTES * 60 * 1000
 
 locale.setlocale(locale.LC_TIME, "nl_NL")
 
@@ -143,10 +147,49 @@ def extract_data(bookings):
     return location, orga, activity, times
 
 
+def fetch_schedule_data():
+    """Fetch today's bookings from both schedules, sort them, and split them
+    into morning/afternoon/evening lists ready for display."""
+    public_bookings = filter_today(
+        get_schedule(PUBLIC_SCHEDULE_ID, PUBLIC_API_KEY) or []
+    )
+    private_bookings = filter_today(
+        get_schedule(PRIVATE_SCHEDULE_ID, PRIVATE_API_KEY) or []
+    )
+    bookings = sort_bookings(public_bookings + private_bookings)
+    print(json.dumps(bookings))
+
+    morning, afternoon, evening = extract_time_of_day(bookings)
+
+    morning_location, morning_orga, morning_activity, morning_times = extract_data(
+        morning
+    )
+    afternoon_location, afternoon_orga, afternoon_activity, afternoon_times = (
+        extract_data(afternoon)
+    )
+    evening_location, evening_orga, evening_activity, evening_times = extract_data(
+        evening
+    )
+
+    return {
+        "morning_locations": morning_location,
+        "morning_organisations": morning_orga,
+        "morning_activities": morning_activity,
+        "morning_times": morning_times,
+        "afternoon_locations": afternoon_location,
+        "afternoon_organisations": afternoon_orga,
+        "afternoon_activities": afternoon_activity,
+        "afternoon_times": afternoon_times,
+        "evening_locations": evening_location,
+        "evening_organisations": evening_orga,
+        "evening_activities": evening_activity,
+        "evening_times": evening_times,
+    }
+
+
 def get_current_period():
     """Return which section ("ochtend", "middag", "avond") the current time
     falls into, or None if it's outside all of them."""
-    now = datetime.now().time()  # noqa: DTZ005
     if time(9, 0) <= now <= time(12, 30):
         return "ochtend"
     if time(12, 30) < now <= time(17, 0):
@@ -156,20 +199,7 @@ def get_current_period():
     return None
 
 
-def create_activity_gui(
-    morning_locations,
-    morning_organisations,
-    morning_activities,
-    morning_times,
-    afternoon_locations,
-    afternoon_organisations,
-    afternoon_activities,
-    afternoon_times,
-    evening_locations,
-    evening_organisations,
-    evening_activities,
-    evening_times,
-):
+def create_activity_gui():
     root = tk.Tk()
     root.title("Activiteitenoverzicht")
     root.configure(bg=WHITE)
@@ -225,25 +255,25 @@ def create_activity_gui(
 
     row_frames = []  # every per-activity row, so we can re-wrap text on resize
 
+    def _apply_wraplengths(width):
+        # Re-wrap each label's text to roughly a third of the remaining
+        # width (after the fixed-width time column), so long names wrap
+        # inside their own column instead of drifting into the neighbour.
+        remaining_width = max(width - time_col_width - 80, 240)
+        col_width = max(remaining_width // 3 - 40, 80)
+        for row in row_frames:
+            for i, label in enumerate(row.winfo_children()):
+                label.configure(wraplength=time_col_width if i == 0 else col_width)
+
     def _on_canvas_resize(event):
         # Keep the inner frame exactly as wide as the canvas, and re-center
         # it horizontally at the top. This is what makes the three columns
         # responsive to window resizing.
         canvas.itemconfig(content_window, width=event.width)
         canvas.coords(content_window, event.width / 2, 0)
-
-        # Re-wrap each label's text to roughly a third of the remaining
-        # width (after the fixed-width time column), so long names wrap
-        # inside their own column instead of drifting into the neighbour.
-        remaining_width = max(event.width - time_col_width - 80, 240)
-        col_width = max(remaining_width // 3 - 40, 80)
-        for row in row_frames:
-            for i, label in enumerate(row.winfo_children()):
-                label.configure(wraplength=time_col_width if i == 0 else col_width)
+        _apply_wraplengths(event.width)
 
     canvas.bind("<Configure>", _on_canvas_resize)
-
-    current_period = get_current_period()
 
     def add_grid_row(parent, texts, font, pady=6, fg=BLACK):
         """Lay out three values across the same responsive column grid used
@@ -268,7 +298,9 @@ def create_activity_gui(
                 justify="left",
             ).grid(row=0, column=col, sticky="nsew", padx=15)
 
-    def add_section(period_key, title, locations, organisations, activities, times):
+    def add_section(
+        period_key, title, locations, organisations, activities, times, current_period
+    ):
         # Only render the section that matches the current time of day,
         # unless IS_TESTING is on (in which case show everything, as before).
         visible = IS_TESTING or period_key == current_period
@@ -328,61 +360,58 @@ def create_activity_gui(
                 fg=row_colors[i % 2],
             )
 
-    add_section(
-        "ochtend",
-        "OCHTEND",
-        morning_locations,
-        morning_organisations,
-        morning_activities,
-        morning_times,
-    )
-    add_section(
-        "middag",
-        "MIDDAG",
-        afternoon_locations,
-        afternoon_organisations,
-        afternoon_activities,
-        afternoon_times,
-    )
-    add_section(
-        "avond",
-        "AVOND",
-        evening_locations,
-        evening_organisations,
-        evening_activities,
-        evening_times,
-    )
+    def render():
+        # Wipe everything currently drawn in the content area so we can
+        # rebuild it from scratch with fresh data.
+        for widget in content.winfo_children():
+            widget.destroy()
+        row_frames.clear()
+
+        data = fetch_schedule_data()
+        current_period = get_current_period()
+
+        date_label.configure(text=today.strftime("%A %d %B %Y"))
+
+        add_section(
+            "ochtend",
+            "OCHTEND",
+            data["morning_locations"],
+            data["morning_organisations"],
+            data["morning_activities"],
+            data["morning_times"],
+            current_period,
+        )
+        add_section(
+            "middag",
+            "MIDDAG",
+            data["afternoon_locations"],
+            data["afternoon_organisations"],
+            data["afternoon_activities"],
+            data["afternoon_times"],
+            current_period,
+        )
+        add_section(
+            "avond",
+            "AVOND",
+            data["evening_locations"],
+            data["evening_organisations"],
+            data["evening_activities"],
+            data["evening_times"],
+            current_period,
+        )
+
+        # The rebuilt rows need wraplengths applied for the canvas's current
+        # width straight away, since resizing the window is what would
+        # normally trigger that.
+        _apply_wraplengths(canvas.winfo_width())
+
+        # Schedule the next automatic refresh.
+        root.after(REFRESH_INTERVAL_MS, render)
+
+    render()
 
     root.mainloop()
 
 
 if __name__ == "__main__":
-    public_bookings = filter_today(get_schedule(PUBLIC_SCHEDULE_ID, PUBLIC_API_KEY))
-    private_bookings = filter_today(get_schedule(PRIVATE_SCHEDULE_ID, PRIVATE_API_KEY))
-    bookings = sort_bookings(public_bookings + private_bookings)
-    print(json.dumps(bookings))
-    morning, afternoon, evening = extract_time_of_day(bookings)
-
-    morning_location, morning_orga, morning_activity, morning_times = extract_data(
-        morning
-    )
-    afternoon_location, afternoon_orga, afternoon_activity, afternoon_times = (
-        extract_data(afternoon)
-    )
-    evening_location, evening_orga, evening_activity, evening_times = extract_data(
-        evening
-    )
-    create_activity_gui(
-        morning_location,
-        morning_orga,
-        morning_activity,
-        morning_times,
-        afternoon_location,
-        afternoon_orga,
-        afternoon_activity,
-        afternoon_times,
-        evening_location,
-        evening_orga,
-        evening_activity,
-        evening_times,
-    )
+    create_activity_gui()
